@@ -1,6 +1,4 @@
 const express = require('express');
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const cors = require('cors');
 require('dotenv').config();
@@ -18,28 +16,10 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
-// JWT Secret
-const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production';
-
-// Default admin credentials
-const DEFAULT_ADMIN = {
-  email: 'admin@stockmanager.com',
-  password: 'admin123'
-};
-
 // Database initialization
 const initializeDatabase = async () => {
   try {
     // Create tables
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS admins (
-        id SERIAL PRIMARY KEY,
-        email VARCHAR(255) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
     await pool.query(`
       CREATE TABLE IF NOT EXISTS categories (
         id SERIAL PRIMARY KEY,
@@ -88,40 +68,13 @@ const initializeDatabase = async () => {
       )
     `);
 
-    // Create default admin if not exists
-    const adminExists = await pool.query('SELECT id FROM admins WHERE email = $1', [DEFAULT_ADMIN.email]);
-    if (adminExists.rows.length === 0) {
-      const hashedPassword = await bcrypt.hash(DEFAULT_ADMIN.password, 10);
-      await pool.query(
-        'INSERT INTO admins (email, password) VALUES ($1, $2)',
-        [DEFAULT_ADMIN.email, hashedPassword]
-      );
-      console.log('Default admin created:', DEFAULT_ADMIN.email);
-    }
-
     console.log('Database initialized successfully');
   } catch (error) {
     console.error('Database initialization error:', error);
   }
 };
 
-// Authentication middleware
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
 
-  if (!token) {
-    return res.status(401).json({ error: 'Access token required' });
-  }
-
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      return res.status(403).json({ error: 'Invalid or expired token' });
-    }
-    req.user = user;
-    next();
-  });
-};
 
 // Routes
 
@@ -130,58 +83,12 @@ app.get('/', (req, res) => {
   res.json({ 
     message: 'Stock Management API',
     version: '1.0.0',
-    status: 'running',
-    defaultCredentials: {
-      email: DEFAULT_ADMIN.email,
-      password: DEFAULT_ADMIN.password
-    }
+    status: 'running'
   });
 });
 
-// Admin Authentication
-app.post('/api/auth/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required' });
-    }
-
-    const result = await pool.query('SELECT * FROM admins WHERE email = $1', [email]);
-    
-    if (result.rows.length === 0) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    const admin = result.rows[0];
-    const isValidPassword = await bcrypt.compare(password, admin.password);
-
-    if (!isValidPassword) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    const token = jwt.sign(
-      { id: admin.id, email: admin.email },
-      JWT_SECRET,
-      { expiresIn: '24h' }
-    );
-
-    res.json({
-      message: 'Login successful',
-      token,
-      admin: {
-        id: admin.id,
-        email: admin.email
-      }
-    });
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
 // Categories Management
-app.get('/api/categories', authenticateToken, async (req, res) => {
+app.get('/api/categories', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM categories ORDER BY name');
     res.json(result.rows);
@@ -191,7 +98,7 @@ app.get('/api/categories', authenticateToken, async (req, res) => {
   }
 });
 
-app.post('/api/categories', authenticateToken, async (req, res) => {
+app.post('/api/categories', async (req, res) => {
   try {
     const { name, description } = req.body;
 
@@ -211,7 +118,7 @@ app.post('/api/categories', authenticateToken, async (req, res) => {
   }
 });
 
-app.put('/api/categories/:id', authenticateToken, async (req, res) => {
+app.put('/api/categories/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description } = req.body;
@@ -232,7 +139,7 @@ app.put('/api/categories/:id', authenticateToken, async (req, res) => {
   }
 });
 
-app.delete('/api/categories/:id', authenticateToken, async (req, res) => {
+app.delete('/api/categories/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -250,7 +157,7 @@ app.delete('/api/categories/:id', authenticateToken, async (req, res) => {
 });
 
 // Products Management
-app.get('/api/products', authenticateToken, async (req, res) => {
+app.get('/api/products', async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT p.*, c.name as category_name, i.quantity, i.min_stock_level, i.max_stock_level, i.location
@@ -266,7 +173,7 @@ app.get('/api/products', authenticateToken, async (req, res) => {
   }
 });
 
-app.get('/api/products/:id', authenticateToken, async (req, res) => {
+app.get('/api/products/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const result = await pool.query(`
@@ -288,7 +195,7 @@ app.get('/api/products/:id', authenticateToken, async (req, res) => {
   }
 });
 
-app.post('/api/products', authenticateToken, async (req, res) => {
+app.post('/api/products', async (req, res) => {
   try {
     const { name, description, category_id, price, cost_price, sku, barcode, initial_quantity = 0, min_stock_level = 0, max_stock_level = 1000, location } = req.body;
 
@@ -338,7 +245,7 @@ app.post('/api/products', authenticateToken, async (req, res) => {
   }
 });
 
-app.put('/api/products/:id', authenticateToken, async (req, res) => {
+app.put('/api/products/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description, category_id, price, cost_price, sku, barcode } = req.body;
@@ -359,7 +266,7 @@ app.put('/api/products/:id', authenticateToken, async (req, res) => {
   }
 });
 
-app.delete('/api/products/:id', authenticateToken, async (req, res) => {
+app.delete('/api/products/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -377,7 +284,7 @@ app.delete('/api/products/:id', authenticateToken, async (req, res) => {
 });
 
 // Inventory Management
-app.get('/api/inventory', authenticateToken, async (req, res) => {
+app.get('/api/inventory', async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT i.*, p.name as product_name, p.sku, p.price, c.name as category_name
@@ -393,7 +300,7 @@ app.get('/api/inventory', authenticateToken, async (req, res) => {
   }
 });
 
-app.get('/api/inventory/low-stock', authenticateToken, async (req, res) => {
+app.get('/api/inventory/low-stock', async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT i.*, p.name as product_name, p.sku, p.price, c.name as category_name
@@ -410,7 +317,7 @@ app.get('/api/inventory/low-stock', authenticateToken, async (req, res) => {
   }
 });
 
-app.put('/api/inventory/:productId/adjust', authenticateToken, async (req, res) => {
+app.put('/api/inventory/:productId/adjust', async (req, res) => {
   try {
     const { productId } = req.params;
     const { quantity, movement_type, reference_number, notes } = req.body;
@@ -484,7 +391,7 @@ app.put('/api/inventory/:productId/adjust', authenticateToken, async (req, res) 
 });
 
 // Stock Movements
-app.get('/api/stock-movements', authenticateToken, async (req, res) => {
+app.get('/api/stock-movements', async (req, res) => {
   try {
     const { product_id, limit = 50 } = req.query;
     
@@ -513,7 +420,7 @@ app.get('/api/stock-movements', authenticateToken, async (req, res) => {
 });
 
 // Dashboard/Statistics
-app.get('/api/dashboard/stats', authenticateToken, async (req, res) => {
+app.get('/api/dashboard/stats', async (req, res) => {
   try {
     const [
       totalProducts,
@@ -556,9 +463,7 @@ const startServer = async () => {
     await initializeDatabase();
     app.listen(PORT, () => {
       console.log(`Stock Management API running on port ${PORT}`);
-      console.log(`Default admin credentials:`);
-      console.log(`Email: ${DEFAULT_ADMIN.email}`);
-      console.log(`Password: ${DEFAULT_ADMIN.password}`);
+      console.log(`All endpoints are now publicly accessible`);
     });
   } catch (error) {
     console.error('Failed to start server:', error);
